@@ -1,0 +1,82 @@
+/* ---------- tokens: steel blue, dark / light ---------- */
+:root{color-scheme:dark;--bg:#0f141b;--fg:#e6eaf0;--muted:#8a96a6;--line:#243040;--grid:#34455a;--accent:#7ea3cc}
+:root[data-theme=light]{color-scheme:light;--bg:#e9edf2;--fg:#1b2533;--muted:#586579;--line:#c5ced9;--grid:#aeb9c7;--accent:#3d5a80}
+
+*{box-sizing:border-box}
+html{background:var(--bg)}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:'Instrument Sans',system-ui,sans-serif;font-size:17px;line-height:1.5;transition:background-color .35s,color .35s}
+a{color:inherit;text-decoration:none}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* ---------- background canvas ---------- */
+#fig{position:fixed;inset:0;width:100vw;height:100vh;z-index:0;pointer-events:none;display:block}
+
+/* ---------- layout ---------- */
+main{position:relative;z-index:1;min-height:100vh;display:flex;align-items:center}
+.wrap{width:100%;max-width:1160px;margin:0 auto;padding:56px 40px}
+.left{display:flex;flex-direction:column;gap:44px;width:100%;max-width:540px}
+h1{margin:0;font-size:clamp(48px,8vw,76px);line-height:.98;font-weight:600;letter-spacing:-.035em}
+.role{font-family:'JetBrains Mono',monospace;font-size:14px;color:var(--accent);margin-top:14px;transition:color .35s}
+
+/* ---------- contact panel ---------- */
+.links{display:flex;flex-direction:column;font-family:'JetBrains Mono',monospace;font-size:15px;
+  border:1px solid color-mix(in srgb,var(--fg) 14%,transparent);border-radius:8px;overflow:hidden;
+  background:color-mix(in srgb,var(--bg) 22%,transparent);
+  -webkit-backdrop-filter:blur(5px);backdrop-filter:blur(5px);
+  text-shadow:0 0 14px color-mix(in srgb,var(--bg) 85%,transparent),0 0 3px color-mix(in srgb,var(--bg) 70%,transparent);
+  box-shadow:0 30px 70px -40px color-mix(in srgb,#000 45%,transparent)}
+.row{position:relative;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 20px;margin:0;color:inherit;transition:background-color .3s,padding .3s}
+.row + .row{border-top:1px solid color-mix(in srgb,var(--fg) 10%,transparent)}
+.row .k{color:var(--muted);transition:color .3s}
+.row .vwrap{display:flex;align-items:center;gap:14px;min-width:0}
+.row .v{background:none;border:0;padding:0;margin:0;font:inherit;color:inherit;text-align:right;min-width:0;overflow-wrap:anywhere}
+button.v{cursor:pointer}
+.arrow,.open{display:inline-block;color:var(--accent);transition:transform .25s}
+.open{padding:6px 4px}
+.row:hover .arrow,.row:focus-within .arrow,.open:hover,.open:focus-visible{transform:translate(4px,-4px)}
+.bar{position:absolute;left:0;bottom:0;height:1px;width:100%;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform .35s cubic-bezier(.2,.7,.2,1)}
+.row:hover .bar,.row:focus-within .bar{transform:scaleX(1)}
+.row:hover,.row:focus-within{background:color-mix(in srgb,var(--accent) 11%,transparent);padding-left:28px}
+.row:hover .k,.row:focus-within .k{color:var(--accent)}
+a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
+
+/* "Copied" toast: floats, never shifts the layout */
+.toast{position:absolute;right:16px;top:0;transform:translateY(-50%);padding:3px 11px;border-radius:999px;background:var(--accent);color:var(--bg);font-size:12px;font-weight:500;line-height:1.5;white-space:nowrap;opacity:0;pointer-events:none;z-index:2}
+.toast.show{animation:toast 1.9s cubic-bezier(.2,.7,.2,1) forwards}
+@keyframes toast{
+  0%{opacity:0;transform:translateY(-15%) scale(.85)}
+  14%{opacity:1;transform:translateY(-75%) scale(1)}
+  76%{opacity:1;transform:translateY(-75%) scale(1)}
+  100%{opacity:0;transform:translateY(-130%) scale(.96)}
+}
+
+/* ---------- flying point ---------- */
+#fly{position:fixed;left:0;top:0;width:12px;height:12px;margin:0;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 25%,transparent),0 0 18px 2px color-mix(in srgb,var(--accent) 60%,transparent);opacity:0;pointer-events:none;z-index:5;will-change:transform,opacity}
+
+/* ---------- theme toggle ---------- */
+#theme{position:fixed;top:20px;right:20px;z-index:6;width:44px;height:44px;border-radius:50%;border:1px solid var(--line);background:color-mix(in srgb,var(--bg) 70%,transparent);color:var(--fg);display:grid;place-items:center;cursor:pointer;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);transition:border-color .25s,transform .25s}
+#theme:hover{border-color:var(--accent);transform:rotate(18deg)}
+#theme svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+:root[data-theme=dark] .i-moon,:root[data-theme=light] .i-sun{display:none}
+
+/* ---------- scene switcher (dev) ---------- */
+#dev{position:fixed;left:16px;bottom:16px;z-index:6;display:flex;gap:6px;font-family:'JetBrains Mono',monospace;font-size:12px}
+#dev[hidden]{display:none}
+#dev button{font:inherit;color:var(--muted);background:color-mix(in srgb,var(--bg) 70%,transparent);border:1px solid var(--line);border-radius:999px;padding:5px 12px;cursor:pointer;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);transition:color .2s,border-color .2s}
+#dev button:hover{color:var(--fg)}
+#dev button[aria-pressed=true]{color:var(--accent);border-color:var(--accent)}
+@media (max-width:900px){#dev{bottom:auto;top:20px;left:16px}}
+
+/* ---------- entrance ---------- */
+@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.rise{opacity:0;animation:rise .8s cubic-bezier(.2,.7,.2,1) forwards;animation-delay:var(--d,0s)}
+.d1{--d:.05s}
+.d2{--d:.2s}
+@media (max-width:480px){
+  .wrap{padding:48px 20px}
+  .links{font-size:14px}
+  .row{padding:15px 16px}
+  .row:hover,.row:focus-within{padding-left:22px}
+  .row .vwrap{gap:8px}
+}
+@media (prefers-reduced-motion:reduce){.rise{animation:none;opacity:1}.row,.row *,#theme{transition:none!important}}
