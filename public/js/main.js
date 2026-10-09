@@ -123,10 +123,10 @@
   }
   function pruneRows(S) {
     if (rowCount < 900) return;
-    for (var key in rowCache) if (key * DZ < S - 8) { delete rowCache[key]; rowCount--; }
+    for (var key in rowCache) if (key * DZ < S - NEAR - 4) { delete rowCache[key]; rowCount--; }
   }
 
-  var MAXR = 260, ROWS = [], SX = new Float32Array(MAXR * NXW), SY = new Float32Array(MAXR * NXW), GOOD = new Uint8Array(MAXR * NXW);
+  var NEAR = 14, MAXR = 300, ROWS = [], SX = new Float32Array(MAXR * NXW), SY = new Float32Array(MAXR * NXW), GOOD = new Uint8Array(MAXR * NXW);
   for (i = 0; i < MAXR; i++) ROWS.push({ zr: 0, al: 1, i0: 0, i1: 0, h: null });
 
   function skyGlow(ctx, W, H, hor) {
@@ -138,7 +138,7 @@
   /* Painter's algorithm, far → near. The mesh is uniform in the world; rows thin out
      with distance (3 levels) and fade in/out, so there is no visible seam. */
   function drawTerrain(ctx, W, H, S) {
-    var R = 0, j, jmin = Math.ceil((S + 1.5) / DZ), jmax = Math.floor((S + 150) / DZ), q, r;
+    var R = 0, j, jmin = Math.floor((S - NEAR) / DZ), jmax = Math.floor((S + 150) / DZ), q, r;
     var spanL = (cam.cx + 90) / cam.focal, spanR = (W - cam.cx + 90) / cam.focal;
     pruneRows(S);
     for (j = jmin; j <= jmax && R < MAXR; j++) {
@@ -146,7 +146,7 @@
       if (lev === 1) fade = 1 - sstep(54, 60, zr); else if (lev === 2) fade = 1 - sstep(28, 34, zr);
       if (fade < 0.02) continue;
       var rw = ROWS[R]; rw.zr = zr; rw.al = clamp(1 - (zr - 6) / 130, 0.3, 0.95) * fade; rw.h = rowHeights(j);
-      var dd = zr + 8, xmin = cam.x - spanL * dd * 1.15 - 0.4 * dd - 3, xmax = cam.x + spanR * dd * 1.15 + 0.4 * dd + 3;
+      var dd = Math.max(zr, 0) + 8, xmin = cam.x - spanL * dd * 1.15 - 0.4 * dd - 3, xmax = cam.x + spanR * dd * 1.15 + 0.4 * dd + 3;
       rw.i0 = clamp(Math.floor((xmin - XMIN) / DX), 0, NXW - 1); rw.i1 = clamp(Math.ceil((xmax - XMIN) / DX), 0, NXW - 1);
       var base = R * NXW;
       for (q = rw.i0; q <= rw.i1; q++) { pr(xsW[q], rw.h[q], zr); SX[base + q] = px; SY[base + q] = py; GOOD[base + q] = pz > 0.9 ? 1 : 0; }
