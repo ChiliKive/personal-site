@@ -60,12 +60,6 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
 :root[data-theme=dark] .i-moon,:root[data-theme=light] .i-sun{display:none}
 
 /* ---------- scene switcher (dev) ---------- */
-#dev{position:fixed;left:16px;bottom:16px;z-index:6;display:flex;gap:6px;font-family:'JetBrains Mono',monospace;font-size:12px}
-#dev[hidden]{display:none}
-#dev button{font:inherit;color:var(--muted);background:color-mix(in srgb,var(--bg) 70%,transparent);border:1px solid var(--line);border-radius:999px;padding:5px 12px;cursor:pointer;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);transition:color .2s,border-color .2s}
-#dev button:hover{color:var(--fg)}
-#dev button[aria-pressed=true]{color:var(--accent);border-color:var(--accent)}
-@media (max-width:900px){#dev{bottom:auto;top:20px;left:16px}}
 
 /* ---------- entrance ---------- */
 @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}

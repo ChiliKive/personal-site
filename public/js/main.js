@@ -1,8 +1,6 @@
 (function () {
   'use strict';
 
-  var DEV = true;            // false → hides the scene switcher
-  var DEFAULT_SCENE = 'flight'; // 'network' | 'flight' | 'learn'
 
   var root = document.documentElement;
   var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -276,113 +274,6 @@
   };
 
   /* =====================================================================
-     SCENE "learn": a network lives ON the landscape. Edges follow the ground,
-     signals run along them, and the nodes slide downhill — that is the training.
-     ===================================================================== */
-  var learnInst = {}, LAYERS = [[3, -10], [4, -3.4], [4, 3.4], [3, 10]];
-  function makeInst(k, age) {
-    var r = rng(k * 313 + 9), cz = k * LT + LT / 2, nodes = [], layers = [];
-    LAYERS.forEach(function (L, li) {
-      var col = [];
-      for (var q = 0; q < L[0]; q++) {
-        var n = { hx: L[1] + (r() - 0.5) * 1.2, hz: cz + lerp(-7, 7, (q + 0.5) / L[0]) + (r() - 0.5) * 1.5, flash: 0, sx: 0, sy: 0, sz: 1 };
-        n.x = n.hx; n.z = n.hz; col.push(n); nodes.push(n);
-      }
-      layers.push(col);
-    });
-    var it = { k: k, cz: cz, nodes: nodes, layers: layers, sigs: [], spawn: 0.3, passes: 0, hist: [], histT: 0 };
-    for (var a = 0; a < age; a += 0.05) stepInst(it, 0.05, false);
-    return it;
-  }
-  var gTmp = [0, 0];
-  function stepInst(it, dt, anim) {
-    var n, q;
-    for (q = 0; q < it.nodes.length; q++) {
-      n = it.nodes[q]; grad(n.x, n.z, gTmp);
-      n.x = clamp(n.x + dt * (-0.75 * gTmp[0] + 0.5 * (n.hx - n.x)), -12, 12); n.z += dt * (-0.75 * gTmp[1] + 0.5 * (n.hz - n.z));
-      if (n.flash > 0) n.flash = Math.max(0, n.flash - dt * 1.4);
-    }
-    it.histT += dt;
-    if (it.histT >= 0.1) {
-      it.histT = 0; var s = 0; for (q = 0; q < it.nodes.length; q++) s += lossAt(it.nodes[q].x, it.nodes[q].z);
-      it.hist.push(s / it.nodes.length); if (it.hist.length > 150) it.hist.shift();
-    }
-    if (anim) {
-      it.spawn -= dt;
-      if (it.spawn <= 0 && it.sigs.length < 5) {
-        it.spawn = 0.45 + Math.random() * 0.4;
-        it.sigs.push({ path: it.layers.map(function (col) { return col[Math.floor(Math.random() * col.length)]; }), seg: 0, p: 0 });
-      }
-      for (q = it.sigs.length - 1; q >= 0; q--) {
-        var sg = it.sigs[q]; sg.p += dt / 0.75;
-        if (sg.p >= 1) { sg.path[sg.seg + 1].flash = 1; sg.seg++; sg.p = 0; if (sg.seg >= sg.path.length - 1) { it.sigs.splice(q, 1); it.passes++; } }
-      }
-    }
-  }
-  function onGround(a, b, u, S) { var x = lerp(a.x, b.x, u), z = lerp(a.z, b.z, u); pr(x, heightAt(x, z) + 0.22, z - S); }
-
-  var learn = {
-    agent: null, stillTime: function () { return 3.4; },
-    draw: function (ctx, D, t, dt, s, cap) {
-      var W = D.w, H = D.h, wide = W > 900, S = S0 + V * t;
-      var hor = terrainCamera(W, H, t, 0.1);
-      skyGlow(ctx, W, H, hor);
-      drawTerrain(ctx, W, H, S);
-
-      var kmin = Math.floor((S - 10) / LT), kmax = Math.floor((S + 46) / LT), k, primary = null, head = null, e, a, b, l, u;
-      for (var key in learnInst) if (learnInst[key].cz - S < -12) delete learnInst[key];
-      for (k = kmin; k <= kmax; k++) {
-        var zc = k * LT + LT / 2 - S;
-        if (zc > 48 || zc < -10) continue;
-        if (!learnInst[k]) learnInst[k] = makeInst(k, Math.max(0, (48 - zc) / V));
-        var it = learnInst[k]; stepInst(it, reduce ? 0 : dt, !reduce);
-        if (reduce && !it.sigs.length) it.sigs.push({ path: it.layers.map(function (col) { return col[1 % col.length]; }), seg: 1, p: 0.5 });
-        var vis = 1 - sstep(30, 48, zc);
-        if (zc > 2 && (!primary || zc < primary.cz - S)) primary = it;
-        // edges, draped on the ground
-        ctx.lineWidth = 1;
-        for (l = 0; l < it.layers.length - 1; l++) for (a = 0; a < it.layers[l].length; a++) for (b = 0; b < it.layers[l + 1].length; b++) {
-          var A = it.layers[l][a], B = it.layers[l + 1][b];
-          ctx.beginPath();
-          for (u = 0; u <= 14; u++) { onGround(A, B, u / 14, S); u ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
-          ctx.lineWidth = 4; ctx.strokeStyle = rgba(C.bg, 0.55 * vis); ctx.stroke();
-          ctx.lineWidth = 1.3; ctx.strokeStyle = rgba(C.accent, 0.6 * vis); ctx.stroke();
-        }
-        // signals running along those edges
-        it.sigs.forEach(function (sg) {
-          var A = sg.path[sg.seg], B = sg.path[sg.seg + 1]; if (!B) return;
-          var u1 = sg.p, u0 = Math.max(0, sg.p - 0.28), q;
-          ctx.beginPath();
-          for (q = 0; q <= 6; q++) { onGround(A, B, lerp(u0, u1, q / 6), S); q ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
-          ctx.strokeStyle = rgba(C.accent, 0.95 * vis); ctx.lineWidth = 2.2; ctx.stroke();
-          onGround(A, B, u1, S); var hx = px, hy = py, dp = pz;
-          ctx.beginPath(); ctx.arc(hx, hy, clamp(55 / dp, 1.8, 5), 0, 7); ctx.fillStyle = rgba(C.accent, vis); ctx.fill();
-          if (zc > 2 && (!head || it === primary)) head = { x: hx, y: hy, it: it };
-        });
-        // nodes
-        for (e = 0; e < it.nodes.length; e++) {
-          var n = it.nodes[e]; pr(n.x, heightAt(n.x, n.z) + 0.25, n.z - S);
-          var r = clamp(95 / pz, 2.6, 8.5);
-          if (n.flash > 0.02) { ctx.beginPath(); ctx.arc(px, py, r + (1 - n.flash) * 12, 0, 7); ctx.strokeStyle = rgba(C.accent, n.flash * 0.6 * vis); ctx.lineWidth = 1; ctx.stroke(); }
-          ctx.beginPath(); ctx.arc(px, py, r, 0, 7); ctx.fillStyle = rgba(C.bg, 0.9 * vis); ctx.fill();
-          ctx.lineWidth = 1.3; ctx.strokeStyle = rgba(C.accent, (n.flash > 0.02 ? 1 : 0.85) * vis); ctx.stroke();
-          if (n.flash > 0.02) { ctx.beginPath(); ctx.arc(px, py, r * 0.55, 0, 7); ctx.fillStyle = rgba(C.accent, n.flash * vis); ctx.fill(); }
-        }
-      }
-      if (primary && head && head.it === primary) this.agent = { x: head.x, y: head.y };
-      else if (primary) { var n0 = primary.nodes[5]; pr(n0.x, heightAt(n0.x, n0.z) + 0.25, n0.z - S); this.agent = { x: px, y: py }; }
-      else this.agent = null;
-
-      leftFade(ctx, W, H, wide);
-
-      if (primary && primary.hist.length > 1) {
-        var h = primary.hist, lo = 1e9, hi = -1e9; h.forEach(function (v) { lo = Math.min(lo, v); hi = Math.max(hi, v); });
-        readout(ctx, W, H, wide, 'pass ' + String(primary.passes).padStart(3, '0') + '  loss ' + fmtLoss(h[h.length - 1]), h, lo, hi, 1);
-      }
-    }
-  };
-
-  /* =====================================================================
      SCENE "network": only a big 3D neural network.
      Layers are planes (nodes sit on a grid inside each), spread left → right,
      the camera orbits slowly and follows the pointer. Forward pulses (accent)
@@ -479,17 +370,9 @@
     };
   })();
 
-  var scenes = { flight: flight, learn: learn, network: netScene };
-  var sceneName = params.get('scene') || store('scene') || DEFAULT_SCENE;
-  if (!scenes[sceneName]) sceneName = DEFAULT_SCENE;
-  var scene = scenes[sceneName], T0 = 0;
-  var dev = document.getElementById('dev');
-  function syncDev() { dev.querySelectorAll('[data-scene]').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.scene === sceneName); }); }
-  function setScene(name) {
-    if (!scenes[name]) return;
-    sceneName = name; scene = scenes[name]; store('scene', name); captured = false; dirty = true; syncDev();
-  }
-  if (DEV) { dev.hidden = false; dev.addEventListener('click', function (e) { var b = e.target.closest('button'); if (b && b.dataset.scene) setScene(b.dataset.scene); }); }
+  // network scene is kept but hidden: not wired to any switcher
+  var scenes = { flight: flight, network: netScene };
+  var scene = scenes.flight, T0 = 0;
 
   /* ---------- theme ---------- */
   var themeBtn = document.getElementById('theme');
@@ -563,7 +446,7 @@
   }
   window.addEventListener('resize', function () { dirty = true; });
 
-  readColors(); syncDev();
+  readColors();
   themeBtn.setAttribute('aria-label', root.getAttribute('data-theme') === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { dirty = true; });
   requestAnimationFrame(function (n) { last = n; frame(n); });
