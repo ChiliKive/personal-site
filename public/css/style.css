@@ -33,11 +33,17 @@ h1{margin:0;font-size:clamp(48px,8vw,76px);line-height:.98;font-weight:600;lette
 button.v{cursor:pointer}
 .arrow,.open{display:inline-block;color:var(--accent);transition:transform .25s}
 .open{padding:6px 4px}
-.row:hover .arrow,.row:focus-within .arrow,.open:hover,.open:focus-visible{transform:translate(4px,-4px)}
+.row:focus-visible .arrow,.open:focus-visible{transform:translate(4px,-4px)}
+@media (hover:hover){.row:hover .arrow,.open:hover{transform:translate(4px,-4px)}}
 .bar{position:absolute;left:0;bottom:0;height:1px;width:100%;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform .35s cubic-bezier(.2,.7,.2,1)}
-.row:hover .bar,.row:focus-within .bar{transform:scaleX(1)}
-.row:hover,.row:focus-within{background:color-mix(in srgb,var(--accent) 11%,transparent);padding-left:28px}
-.row:hover .k,.row:focus-within .k{color:var(--accent)}
+.row:has(:focus-visible) .bar,.row:focus-visible .bar{transform:scaleX(1)}
+.row:has(:focus-visible),.row:focus-visible{background:color-mix(in srgb,var(--accent) 11%,transparent);padding-left:28px}
+.row:has(:focus-visible) .k,.row:focus-visible .k{color:var(--accent)}
+@media (hover:hover){
+  .row:hover .bar{transform:scaleX(1)}
+  .row:hover{background:color-mix(in srgb,var(--accent) 11%,transparent);padding-left:28px}
+  .row:hover .k{color:var(--accent)}
+}
 a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
 
 /* "Copied" toast: floats, never shifts the layout */
@@ -70,7 +76,8 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
   .wrap{padding:48px 20px}
   .links{font-size:14px}
   .row{padding:15px 16px}
-  .row:hover,.row:focus-within{padding-left:22px}
+  .row:has(:focus-visible),.row:focus-visible{padding-left:22px}
+  @media (hover:hover){.row:hover{padding-left:22px}}
   .row .vwrap{gap:8px}
 }
 @media (prefers-reduced-motion:reduce){.rise{animation:none;opacity:1}.row,.row *,#theme{transition:none!important}}

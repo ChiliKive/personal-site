@@ -405,9 +405,9 @@
   /* ---------- the flying point ---------- */
   var fly = document.getElementById('fly'), flyS = { x: 0, y: 0, o: 0, mode: 'idle' }, hoverRow = null;
   document.querySelectorAll('.row').forEach(function (r) {
-    r.addEventListener('mouseenter', function () { hoverRow = r; });
-    r.addEventListener('mouseleave', function () { if (hoverRow === r) hoverRow = null; });
-    r.addEventListener('focusin', function () { hoverRow = r; });
+    r.addEventListener('pointerenter', function (e) { if (e.pointerType === 'mouse') hoverRow = r; });
+    r.addEventListener('pointerleave', function () { if (hoverRow === r) hoverRow = null; });
+    r.addEventListener('focusin', function (e) { if (e.target.matches(':focus-visible')) hoverRow = r; });
     r.addEventListener('focusout', function () { if (hoverRow === r) hoverRow = null; });
   });
   function agentClient() { var a = scene.agent; return a ? { x: a.x, y: a.y } : { x: innerWidth * 0.62, y: innerHeight * 0.55 }; }
