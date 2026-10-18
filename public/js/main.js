@@ -1,7 +1,6 @@
 (function () {
   'use strict';
 
-
   var root = document.documentElement;
   var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
   var params = new URLSearchParams(location.search);
@@ -15,10 +14,20 @@
   function sstep(a, b, v) { var t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); }
   function rng(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; var t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 
-  var C = {};
+  /* C.x = [r, g, b]; CA.x[i] = 'rgba(..., i/100)' prebuilt, so the hot loops don't build strings */
+  var C = {}, CA = {}, FOG = [], FOGN = 64, FOGMAX = 0.13;
+  function col(k, a) { return CA[k][a <= 0 ? 0 : a >= 1 ? 100 : Math.round(a * 100)]; }
   function readColors() {
     var cs = getComputedStyle(root);
-    ['bg', 'fg', 'muted', 'line', 'grid', 'accent'].forEach(function (k) { C[k] = hex(cs.getPropertyValue('--' + k)); });
+    ['bg', 'fg', 'muted', 'line', 'grid', 'accent'].forEach(function (k) {
+      var c = C[k] = hex(cs.getPropertyValue('--' + k)), a = CA[k] = [];
+      for (var q = 0; q <= 100; q++) a.push(rgba(c, q / 100));
+    });
+    for (var f = 0; f <= FOGN; f++) {
+      var t = f / FOGN * FOGMAX;
+      FOG[f] = 'rgb(' + Math.round(lerp(C.bg[0], C.accent[0], t)) + ',' + Math.round(lerp(C.bg[1], C.accent[1], t)) + ',' + Math.round(lerp(C.bg[2], C.accent[2], t)) + ')';
+    }
+    gradKey = ''; glow = null;
     var m = document.querySelector('meta[name=theme-color]'); if (m) m.setAttribute('content', cs.getPropertyValue('--bg').trim());
   }
 
@@ -29,16 +38,19 @@
   }, { passive: true });
   document.addEventListener('mouseleave', function () { M.x = 0; M.y = 0; dirty = true; });
 
-  var canvas = document.getElementById('fig');
+  /* size is measured only after a resize; dprCap only goes down on devices that can't keep up */
+  var canvas = document.getElementById('fig'), size = null, dprCap = 2;
   function fit(c) {
-    var r = c.getBoundingClientRect(), d = Math.min(window.devicePixelRatio || 1, 2);
-    var w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
-    if (c.width !== Math.round(w * d) || c.height !== Math.round(h * d)) { c.width = Math.round(w * d); c.height = Math.round(h * d); }
-    return { w: w, h: h, d: d };
+    if (!size) {
+      var r = c.getBoundingClientRect(), d = Math.min(window.devicePixelRatio || 1, dprCap);
+      size = { w: Math.max(1, Math.round(r.width)), h: Math.max(1, Math.round(r.height)), d: d };
+      if (c.width !== Math.round(size.w * d) || c.height !== Math.round(size.h * d)) { c.width = Math.round(size.w * d); c.height = Math.round(size.h * d); }
+    }
+    return size;
   }
 
   /* =====================================================================
-     Shared: camera, readout, fade behind the text
+     Camera, readout, fade behind the text
      ===================================================================== */
   var cam = { x: 0, y: 0, z: 0, fx: 0, fy: 0, fz: 1, rx: 1, ry: 0, rz: 0, ux: 0, uy: 1, uz: 0, focal: 1, cx: 0, cy: 0 };
   var px = 0, py = 0, pz = 1;
@@ -58,14 +70,20 @@
   }
 
   /* the darkening from the left edge (keeps the title readable) */
-  var FADE_WIDTH = 0.8, FADE_STRENGTH = 0.9;
+  /* gradients are rebuilt only when the size or the theme changes */
+  var FADE_WIDTH = 0.8, FADE_STRENGTH = 0.9, gradKey = '', fadeG = null, skyG = null;
+  function gradients(ctx, W, H) {
+    var key = W + 'x' + H; if (key === gradKey) return; gradKey = key;
+    var w = W * FADE_WIDTH;
+    fadeG = ctx.createLinearGradient(0, 0, w, 0);
+    fadeG.addColorStop(0, rgba(C.bg, FADE_STRENGTH)); fadeG.addColorStop(0.35, rgba(C.bg, FADE_STRENGTH * 0.68));
+    fadeG.addColorStop(0.7, rgba(C.bg, FADE_STRENGTH * 0.25)); fadeG.addColorStop(1, rgba(C.bg, 0));
+    skyG = ctx.createLinearGradient(0, -H * 0.5, 0, 4); // relative to the horizon, drawn with a translate
+    skyG.addColorStop(0, rgba(C.accent, 0)); skyG.addColorStop(1, rgba(C.accent, 0.13));
+  }
   function leftFade(ctx, W, H, wide) {
-    if (wide) {
-      var w = W * FADE_WIDTH, g = ctx.createLinearGradient(0, 0, w, 0);
-      g.addColorStop(0, rgba(C.bg, FADE_STRENGTH)); g.addColorStop(0.35, rgba(C.bg, FADE_STRENGTH * 0.68));
-      g.addColorStop(0.7, rgba(C.bg, FADE_STRENGTH * 0.25)); g.addColorStop(1, rgba(C.bg, 0));
-      ctx.fillStyle = g; ctx.fillRect(0, 0, w, H);
-    } else { ctx.fillStyle = rgba(C.bg, 0.42); ctx.fillRect(0, 0, W, H); }
+    if (wide) { ctx.fillStyle = fadeG; ctx.fillRect(0, 0, W * FADE_WIDTH, H); }
+    else { ctx.fillStyle = col('bg', 0.42); ctx.fillRect(0, 0, W, H); }
   }
 
   /* loss sparkline + numbers, bottom right */
@@ -75,23 +93,49 @@
     if (series.length > 1) {
       ctx.beginPath();
       for (k = 0; k < series.length; k++) {
-        var xx = sx0 + k / Math.max(1, series.n - 1 || series.length - 1) * sw, yy = sy0 + (1 - (series[k] - lo) / Math.max(1e-6, hi - lo)) * sh;
+        var xx = sx0 + k / Math.max(1, series.n - 1) * sw, yy = sy0 + (1 - (series[k] - lo) / Math.max(1e-6, hi - lo)) * sh;
         k ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy);
       }
-      ctx.strokeStyle = rgba(C.accent, 0.9); ctx.lineWidth = 1.4; ctx.stroke();
+      ctx.strokeStyle = col('accent', 0.9); ctx.lineWidth = 1.4; ctx.stroke();
     }
-    ctx.fillStyle = rgba(C.line, 1); ctx.fillRect(sx0, sy0 + sh + 3, sw, 1);
-    ctx.font = '12px "JetBrains Mono", monospace'; ctx.textAlign = wide ? 'right' : 'left'; ctx.fillStyle = rgba(C.muted, 1);
+    ctx.fillStyle = col('line', 1); ctx.fillRect(sx0, sy0 + sh + 3, sw, 1);
+    ctx.font = '12px "JetBrains Mono", monospace'; ctx.textAlign = wide ? 'right' : 'left'; ctx.fillStyle = col('muted', 1);
     ctx.fillText(txt, rx, ry);
     ctx.globalAlpha = 1;
   }
+  /* every live descent on one chart, no labels: each run keeps its own (dimmer or brighter) tone */
+  var allScale = { n: 60, lo: -3, hi: 1 };
+  function readoutAll(ctx, W, H, wide, recs, dt) {
+    var rx = wide ? W - 28 : 20, sw = 150, sh = 30, sx0 = wide ? rx - sw : rx, sy0 = H - 24 - 22 - sh, tn = 20, tlo = 1e9, thi = -1e9, e = Math.min(1, dt * 2.5);
+    recs.forEach(function (c) { tn = Math.max(tn, c.run.pts.length - 1); tlo = Math.min(tlo, c.run.lo); thi = Math.max(thi, c.run.hi); });
+    if (thi > tlo) { allScale.n += (tn - allScale.n) * e; allScale.lo += (tlo - allScale.lo) * e; allScale.hi += (thi - allScale.hi) * e; }
+    var span = Math.max(1e-6, allScale.hi - allScale.lo);
+    recs.slice().sort(function (a, b) { return a.run.tone - b.run.tone; }).forEach(function (c) {
+      var a = clamp(c.alp, 0, 1) * sstep(1, 5, c.zr) * c.run.tone, k, xx, yy;
+      if (a < 0.01) return;
+      ctx.globalAlpha = 1; ctx.beginPath();
+      for (k = 0; k <= c.i0; k++) {
+        xx = sx0 + k / allScale.n * sw; yy = sy0 + (1 - (c.run.pts[k][2] - allScale.lo) / span) * sh;
+        k ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy);
+      }
+      xx = sx0 + c.fi / allScale.n * sw; yy = sy0 + (1 - (lerp(c.P0[2], c.P1[2], c.fr) - allScale.lo) / span) * sh; ctx.lineTo(xx, yy);
+      ctx.strokeStyle = col('accent', a); ctx.lineWidth = 1.3; ctx.stroke();
+      ctx.beginPath(); ctx.arc(xx, yy, 1.8, 0, 7); ctx.fillStyle = col('accent', a + 0.15); ctx.fill();
+    });
+    ctx.fillStyle = col('line', 1); ctx.fillRect(sx0, sy0 + sh + 3, sw, 1);
+  }
+  /* graph mode: 'single' (one point, start → convergence) or 'all'. ?graph=all, or press G to switch */
+  var graphMode = params.get('graph') === 'all' ? 'all' : 'single';
+  document.addEventListener('keydown', function (ev) {
+    if ((ev.key === 'g' || ev.key === 'G') && !ev.ctrlKey && !ev.metaKey && !ev.altKey) { graphMode = graphMode === 'all' ? 'single' : 'all'; dirty = true; }
+  });
   function fmtLoss(l) { return (l < 0 ? '−' : ' ') + Math.abs(l).toFixed(3); }
 
   /* =====================================================================
      World: ONE endless landscape, one smooth function everywhere.
      It scrolls towards the camera. Loss wells are hashed per tile.
      ===================================================================== */
-  var LT = 18, DX = 0.5, DZ = 0.5, XMIN = -36, NXW = 145, HS = 1.7, V = 1.8, STEP = 0.05, HOLD = 1.8, S0 = 40;
+  var LT = 18, DX = 0.5, DZ = 0.5, XMIN = -36, NXW = 145, HS = 1.7, V = 1.8, STEP = 0.05, HOLD = 1.8, S0 = 40, TRAIL_B = 16;
   var xsW = new Float32Array(NXW), i;
   for (i = 0; i < NXW; i++) xsW[i] = XMIN + i * DX;
 
@@ -130,9 +174,17 @@
   for (i = 0; i < MAXR; i++) ROWS.push({ zr: 0, al: 1, i0: 0, i1: 0, h: null });
 
   function skyGlow(ctx, W, H, hor) {
-    var gl = ctx.createLinearGradient(0, hor - H * 0.5, 0, hor + 4);
-    gl.addColorStop(0, rgba(C.accent, 0)); gl.addColorStop(1, rgba(C.accent, 0.13));
-    ctx.fillStyle = gl; ctx.fillRect(0, 0, W, H);
+    ctx.translate(0, hor); ctx.fillStyle = skyG; ctx.fillRect(0, -hor, W, H); ctx.translate(0, -hor);
+  }
+
+  /* soft glow around a point: one pre-rendered sprite instead of a new radial gradient per point per frame */
+  var glow = null, GLOW = 64;
+  function glowSprite() {
+    if (glow) return glow;
+    glow = document.createElement('canvas'); glow.width = glow.height = GLOW;
+    var g = glow.getContext('2d'), gr = g.createRadialGradient(GLOW / 2, GLOW / 2, 0, GLOW / 2, GLOW / 2, GLOW / 2);
+    gr.addColorStop(0, rgba(C.accent, 1)); gr.addColorStop(1, rgba(C.accent, 0));
+    g.fillStyle = gr; g.fillRect(0, 0, GLOW, GLOW); return glow;
   }
 
   /* Painter's algorithm, far → near. The mesh is uniform in the world; rows thin out
@@ -161,19 +213,19 @@
       ctx.closePath(); ctx.fillStyle = curFill; ctx.fill();
       ctx.beginPath(); ctx.moveTo(SX[of + a], SY[of + a]);
       for (t = a + 1; t <= b; t++) ctx.lineTo(SX[of + t], SY[of + t]);
-      ctx.strokeStyle = rgba(C.grid, al); ctx.stroke();
+      ctx.strokeStyle = col('grid', al); ctx.stroke();
       if (connA > 0.015) {
         ctx.beginPath();
         for (t = a; t <= b; t++) { ctx.moveTo(SX[of + t], SY[of + t]); ctx.lineTo(SX[on + t], SY[on + t]); }
-        ctx.strokeStyle = rgba(C.accent, connA); ctx.stroke();
+        ctx.strokeStyle = col('accent', connA); ctx.stroke();
       }
     }
     ctx.lineWidth = 1;
     for (r = R - 1; r >= 1; r--) {
       var Fr = ROWS[r], Nr = ROWS[r - 1], lo = Math.max(Fr.i0, Nr.i0), hi = Math.min(Fr.i1, Nr.i1);
       if (hi - lo < 1) continue;
-      var of = r * NXW, on = (r - 1) * NXW, fog = sstep(40, 150, Fr.zr) * 0.13;
-      curFill = 'rgb(' + Math.round(lerp(C.bg[0], C.accent[0], fog)) + ',' + Math.round(lerp(C.bg[1], C.accent[1], fog)) + ',' + Math.round(lerp(C.bg[2], C.accent[2], fog)) + ')';
+      var of = r * NXW, on = (r - 1) * NXW, fog = sstep(40, 150, Fr.zr) * FOGMAX;
+      curFill = FOG[Math.round(fog / FOGMAX * FOGN)];
       connA = Fr.al * 0.3 * (1 - sstep(34, 46, Fr.zr));
       var rs = -1;
       for (q = lo; q <= hi + 1; q++) {
@@ -183,7 +235,7 @@
       }
     }
     if (R > 0) {
-      var r0 = ROWS[0], rs0 = -1; ctx.strokeStyle = rgba(C.grid, 0.95);
+      var r0 = ROWS[0], rs0 = -1; ctx.strokeStyle = col('grid', 0.95);
       for (q = r0.i0; q <= r0.i1 + 1; q++) {
         if (q <= r0.i1 && GOOD[q]) { if (rs0 < 0) { rs0 = q; ctx.beginPath(); ctx.moveTo(SX[q], SY[q]); } else ctx.lineTo(SX[q], SY[q]); }
         else if (rs0 >= 0) { ctx.stroke(); rs0 = -1; }
@@ -210,62 +262,81 @@
       vx = 0.55 * vx - 0.2 * g[0] + (r() - 0.5) * nz; vz = 0.55 * vz - 0.2 * g[1] + (r() - 0.5) * nz;
       x = clamp(x + vx, -6, 6); z = clamp(z + vz, lo - 6, hi + 6); pts.push([x, z, lossAt(x, z)]);
     }
-    var lo2 = 1e9, hi2 = -1e9; pts.forEach(function (p) { lo2 = Math.min(lo2, p[2]); hi2 = Math.max(hi2, p[2]); });
-    ru = { pts: pts, sStart: k * LT + LT / 2 - 42 + m * V * 1.5, lo: lo2, hi: hi2 }; runCache[key] = ru; return ru;
+    var lo2 = 1e9, hi2 = -1e9; pts.forEach(function (p) { lo2 = Math.min(lo2, p[2]); hi2 = Math.max(hi2, p[2]); p.push(heightAt(p[0], p[1]) + 0.12); });
+    ru = { key: key, tone: 0.22 + 0.7 * rng(key * 53 + 11)(), pts: pts, sStart: k * LT + LT / 2 - 42 + m * V * 1.5, lo: lo2, hi: hi2 }; runCache[key] = ru; return ru;
   }
 
   /* =====================================================================
-     SCENE "flight": the landscape flows towards us, descents happen on it
+     The landscape flows towards us, gradient descents happen on it
      ===================================================================== */
   var flight = {
     agent: null, stillTime: function () { return 3.4; },
     draw: function (ctx, D, t, dt, s, cap) {
       var W = D.w, H = D.h, wide = W > 900, S = S0 + V * t;
       var hor = terrainCamera(W, H, t);
+      gradients(ctx, W, H);
       skyGlow(ctx, W, H, hor);
       drawTerrain(ctx, W, H, S);
 
-      var kmin = Math.floor((S - 8) / LT), kmax = Math.floor((S + 60) / LT), k, m, primary = null, latest = null, sI = 0;
+      var kmin = Math.floor((S - 8) / LT), kmax = Math.floor((S + 60) / LT), k, m, primary = null, latest = null, recs = [], dots = [];
       for (k = kmin; k <= kmax; k++) for (m = 0; m < 2; m++) {
         var run = agentRun(k, m), el = (S - run.sStart) / V, n = run.pts.length; if (el < 0) continue;
         var fi = clamp(el / STEP, 0, n - 1), i0 = Math.floor(fi), fr = fi - i0, P0 = run.pts[i0], P1 = run.pts[Math.min(n - 1, i0 + 1)];
         var zw = lerp(P0[1], P1[1], fr), zr = zw - S; if (zr < 1.0) continue;
         var alp = clamp(el / 0.5, 0, 1) * (m === 0 ? 1 : 0.8), xw = lerp(P0[0], P1[0], fr);
-        var from = Math.max(0, i0 - 80), q, Q;
-        Q = run.pts[from]; pr(Q[0], heightAt(Q[0], Q[1]) + 0.12, Q[1] - S); var prevX = px, prevY = py;
-        for (q = from + 1; q <= i0; q++) {
-          Q = run.pts[q]; var age = (q - from) / Math.max(1, i0 - from);
-          pr(Q[0], heightAt(Q[0], Q[1]) + 0.12, Q[1] - S);
-          ctx.beginPath(); ctx.moveTo(prevX, prevY); ctx.lineTo(px, py); ctx.strokeStyle = rgba(C.accent, (0.12 + age * 0.8) * alp); ctx.lineWidth = 1 + age * 1.6; ctx.stroke(); prevX = px; prevY = py;
+        /* the trail gets brighter and thicker towards the head; drawn in TRAIL_B pieces, not segment by segment */
+        var from = Math.max(0, i0 - 80), span = Math.max(1, i0 - from), q, Q, b, qa, qb;
+        Q = run.pts[from]; pr(Q[0], Q[3], Q[1] - S); var prevX = px, prevY = py;
+        for (b = 0; b < TRAIL_B; b++) {
+          qa = from + 1 + Math.floor(b * span / TRAIL_B); qb = from + Math.floor((b + 1) * span / TRAIL_B);
+          if (qb > i0) qb = i0;
+          if (qb < qa) continue;
+          var age = ((qa + qb) / 2 - from) / span;
+          ctx.beginPath(); ctx.moveTo(prevX, prevY);
+          for (q = qa; q <= qb; q++) { Q = run.pts[q]; pr(Q[0], Q[3], Q[1] - S); ctx.lineTo(px, py); }
+          ctx.strokeStyle = col('accent', (0.12 + age * 0.8) * alp); ctx.lineWidth = 1 + age * 1.6; ctx.stroke(); prevX = px; prevY = py;
         }
         pr(xw, heightAt(xw, zw) + 0.12, zr); var hx = px, hy = py, depth = pz;
-        ctx.beginPath(); ctx.moveTo(prevX, prevY); ctx.lineTo(hx, hy); ctx.strokeStyle = rgba(C.accent, alp); ctx.lineWidth = 2.6; ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(prevX, prevY); ctx.lineTo(hx, hy); ctx.strokeStyle = col('accent', alp); ctx.lineWidth = 2.6; ctx.stroke();
         var rec = { x: hx, y: hy, run: run, fi: fi, i0: i0, fr: fr, el: el, alp: alp, P0: P0, P1: P1, zr: zr, active: el < n * STEP, started: run.sStart };
+        recs.push(rec);
         if (rec.active && (!primary || zr < primary.zr)) primary = rec;
         if (!latest || rec.started > latest.started) latest = rec;
-        (flight._dots = flight._dots || []).push({ hx: hx, hy: hy, depth: depth, alp: alp, rec: rec });
+        dots.push({ hx: hx, hy: hy, depth: depth, alp: alp, rec: rec });
         var done = el - n * STEP;
         if (done > 0 && done < 1.6) {
           var rr = 0.15 + done * 1.5, yy = heightAt(xw, zw) + 0.1;
           ctx.beginPath();
           for (q = 0; q <= 40; q++) { var an = q / 40 * 6.2832; pr(xw + Math.cos(an) * rr, yy, zw - S + Math.sin(an) * rr); q ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
-          ctx.strokeStyle = rgba(C.accent, (1 - done / 1.6) * 0.8 * alp); ctx.lineWidth = 1.5; ctx.stroke();
+          ctx.strokeStyle = col('accent', (1 - done / 1.6) * 0.8 * alp); ctx.lineWidth = 1.5; ctx.stroke();
         }
       }
       primary = primary || latest;
-      var dots = flight._dots || []; flight._dots = [];
+      if (graphMode === 'single') {
+        /* stay on one point from its first step until it has converged (plus a short hold) */
+        var lk = null, cand = null;
+        recs.forEach(function (c) {
+          if (c.run.key === flight.lockKey && c.el - c.run.pts.length * STEP < HOLD) lk = c;
+          if (c.active && (!cand || c.el < cand.el)) cand = c;
+        });
+        primary = lk || cand || latest; flight.lockKey = primary ? primary.run.key : null;
+      }
+      var spr = glowSprite();
       dots.forEach(function (d) {
         if (cap && d.rec === primary) return;
-        var rad = clamp(80 / d.depth, 2.6, 7.5), gr = ctx.createRadialGradient(d.hx, d.hy, 0, d.hx, d.hy, rad * 5);
-        gr.addColorStop(0, rgba(C.accent, 0.55 * d.alp)); gr.addColorStop(1, rgba(C.accent, 0));
-        ctx.fillStyle = gr; ctx.fillRect(d.hx - rad * 5, d.hy - rad * 5, rad * 10, rad * 10);
-        ctx.beginPath(); ctx.arc(d.hx, d.hy, rad, 0, 7); ctx.fillStyle = rgba(C.accent, d.alp); ctx.fill();
+        var rad = clamp(80 / d.depth, 2.6, 7.5);
+        ctx.globalAlpha = 0.55 * d.alp; ctx.drawImage(spr, d.hx - rad * 5, d.hy - rad * 5, rad * 10, rad * 10); ctx.globalAlpha = 1;
+        ctx.beginPath(); ctx.arc(d.hx, d.hy, rad, 0, 7); ctx.fillStyle = col('accent', d.alp); ctx.fill();
       });
       this.agent = primary ? { x: primary.x, y: primary.y } : null;
+      if (graphMode === 'single' && primary && !cap) {
+        ctx.beginPath(); ctx.arc(primary.x, primary.y, 11, 0, 7); ctx.strokeStyle = col('accent', 0.55 * primary.alp); ctx.lineWidth = 1.2; ctx.stroke();
+      }
 
       leftFade(ctx, W, H, wide);
 
-      if (primary) {
+      if (graphMode === 'all') readoutAll(ctx, W, H, wide, recs, dt);
+      else if (primary) {
         var run0 = primary.run, loss = lerp(primary.P0[2], primary.P1[2], primary.fr), doneAll = primary.el - run0.pts.length * STEP > 0;
         var ser = []; for (var z = 0; z <= primary.i0; z++) ser.push(run0.pts[z][2]); ser.n = run0.pts.length;
         readout(ctx, W, H, wide, 'step ' + String(Math.round(primary.fi)).padStart(3, '0') + '  loss ' + fmtLoss(loss) + (doneAll ? '  converged' : ''), ser, run0.lo, run0.hi, primary.alp * 0.9 + 0.1);
@@ -273,106 +344,6 @@
     }
   };
 
-  /* =====================================================================
-     SCENE "network": only a big 3D neural network.
-     Layers are planes (nodes sit on a grid inside each), spread left → right,
-     the camera orbits slowly and follows the pointer. Forward pulses (accent)
-     run through the net, then backward pulses (light) come back and nudge the weights.
-     ===================================================================== */
-  var netScene = (function () {
-    var spec = [4, 7, 7, 5, 3], LX = 7.2, PY = 9.5, PZ = 9, nodes = [], flat = [], edges = [], r = rng(33), sigs = [], spawn = 0, id = 0;
-    spec.forEach(function (cnt, l) {
-      var col = [], cols = Math.ceil(Math.sqrt(cnt * 1.25)), rows = Math.ceil(cnt / cols);
-      for (var q = 0; q < cnt; q++) {
-        var ci = q % cols, ri = Math.floor(q / cols), inRow = ri === rows - 1 ? cnt - ri * cols : cols;
-        var gz = inRow === 1 ? 0 : lerp(-0.72, 0.72, ci / (inRow - 1)), gy = rows === 1 ? 0 : lerp(0.7, -0.7, ri / (rows - 1));
-        var n = { id: id++, l: l, x: (l - (spec.length - 1) / 2) * LX, y: gy * PY * 0.85 + (r() - 0.5) * 1.4, z: gz * PZ + (r() - 0.5) * 1.6, ph: r() * 6.28, flash: 0, back: 0, sx: 0, sy: 0, sz: 1, out: {} };
-        col.push(n); flat.push(n);
-      }
-      nodes.push(col);
-    });
-    for (var l = 0; l < nodes.length - 1; l++) nodes[l].forEach(function (A) {
-      nodes[l + 1].forEach(function (B) { var e = { A: A, B: B, w: 0.15 + 0.85 * Math.pow(r(), 2), wt: 0, f: 0 }; e.wt = e.w; A.out[B.id] = e; edges.push(e); });
-    });
-    var planeC = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
-    return {
-      agent: null, stillTime: function () { return 5; },
-      draw: function (ctx, D, t, dt, s, cap) {
-        var W = D.w, H = D.h, wide = W > 900, q, a, b, e;
-        var yaw = 0.26 - s.x * 0.45 + Math.sin(t * 0.1) * 0.1, pitch = 0.2 - s.y * 0.14 + Math.sin(t * 0.07) * 0.02;
-        setCam(yaw, pitch, 46, [0, 0, 0], Math.max(W, H * 1.2) * 1.0, wide ? W * 0.645 : W * 0.5, H * 0.5);
-        var g = ctx.createRadialGradient(cam.cx, cam.cy, 0, cam.cx, cam.cy, Math.max(W, H) * 0.7);
-        g.addColorStop(0, rgba(C.accent, 0.12)); g.addColorStop(1, rgba(C.accent, 0)); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-
-        // faint floor grid + layer planes: they give the network a space to live in
-        ctx.lineWidth = 1; ctx.strokeStyle = rgba(C.grid, 0.22);
-        ctx.beginPath();
-        for (q = -24; q <= 24; q += 4) { pr(q, -PY * 1.05, -16); ctx.moveTo(px, py); pr(q, -PY * 1.05, 16); ctx.lineTo(px, py); }
-        for (q = -16; q <= 16; q += 4) { pr(-24, -PY * 1.05, q); ctx.moveTo(px, py); pr(24, -PY * 1.05, q); ctx.lineTo(px, py); }
-        ctx.stroke();
-        for (a = 0; a < spec.length; a++) {
-          var lx = (a - (spec.length - 1) / 2) * LX;
-          ctx.beginPath();
-          for (q = 0; q < 4; q++) { pr(lx, planeC[q][0] * PY * 0.9, planeC[q][1] * PZ * 1.05); q ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
-          ctx.closePath(); ctx.fillStyle = rgba(C.accent, 0.025); ctx.fill(); ctx.strokeStyle = rgba(C.accent, 0.16); ctx.stroke();
-        }
-
-        for (q = 0; q < flat.length; q++) {
-          var n = flat[q]; pr(n.x + Math.sin(t * 0.3 + n.ph) * 0.45, n.y + Math.cos(t * 0.35 + n.ph) * 0.4, n.z + Math.sin(t * 0.27 + n.ph * 1.7) * 0.4);
-          n.sx = px; n.sy = py; n.sz = pz; n.flash = Math.max(0, n.flash - dt * 1.2); n.back = Math.max(0, n.back - dt * 1.2);
-        }
-        for (q = 0; q < edges.length; q++) {
-          e = edges[q]; e.w += (e.wt - e.w) * Math.min(1, dt * 2.5); e.f = Math.max(0, e.f - dt * 1.1);
-          var dep = clamp(1.35 - (e.A.sz - 24) / 40, 0.3, 1);
-          ctx.strokeStyle = rgba(e.f > 0.02 ? C.fg : C.accent, Math.min(0.9, (0.07 + 0.38 * e.w) * dep + e.f * 0.5));
-          ctx.lineWidth = 0.7 + e.w * 0.9;
-          ctx.beginPath(); ctx.moveTo(e.A.sx, e.A.sy); ctx.lineTo(e.B.sx, e.B.sy); ctx.stroke();
-        }
-        if (!reduce) {
-          spawn -= dt;
-          if (spawn <= 0 && sigs.length < 9) {
-            spawn = 0.35 + Math.random() * 0.5;
-            sigs.push({ path: nodes.map(function (col) { return col[Math.floor(Math.random() * col.length)]; }), seg: 0, p: 0, back: false });
-          }
-          for (var k = sigs.length - 1; k >= 0; k--) {
-            var sg = sigs[k]; sg.p += dt / 0.7;
-            if (sg.p >= 1) {
-              var from = sg.path[sg.seg], dest = sg.path[sg.seg + 1];
-              if (sg.back) { dest.back = 1; var be = dest.out[from.id]; if (be) { be.f = 1; be.wt = clamp(be.w + (Math.random() - 0.5) * 0.5, 0.08, 1); } }
-              else dest.flash = 1;
-              sg.seg++; sg.p = 0;
-              if (sg.seg >= sg.path.length - 1) { sigs.splice(k, 1); if (!sg.back) sigs.push({ path: sg.path.slice().reverse(), seg: 0, p: 0, back: true }); }
-            }
-          }
-        } else if (!sigs.length) sigs.push({ path: nodes.map(function (col) { return col[1 % col.length]; }), seg: 1, p: 0.5, back: false });
-        var lead = null;
-        sigs.forEach(function (sg) {
-          var A = sg.path[sg.seg], B = sg.path[sg.seg + 1]; if (!B) return;
-          var x = lerp(A.sx, B.sx, sg.p), y = lerp(A.sy, B.sy, sg.p), x0 = lerp(A.sx, B.sx, Math.max(0, sg.p - 0.25)), y0 = lerp(A.sy, B.sy, Math.max(0, sg.p - 0.25));
-          var col = sg.back ? C.fg : C.accent;
-          ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x, y); ctx.strokeStyle = rgba(col, sg.back ? 0.75 : 0.95); ctx.lineWidth = 2.2; ctx.stroke();
-          if (!sg.back && !lead) lead = { x: x, y: y };
-          if (!(cap && lead && lead.x === x && lead.y === y)) { ctx.beginPath(); ctx.arc(x, y, clamp(110 / A.sz, 2.2, 5), 0, 7); ctx.fillStyle = rgba(col, 1); ctx.fill(); }
-        });
-        this.agent = lead || { x: cam.cx, y: cam.cy };
-        var order = flat.slice().sort(function (p1, p2) { return p2.sz - p1.sz; });
-        order.forEach(function (n) {
-          var rad = clamp(300 / n.sz, 4, 19), f = Math.max(n.flash, n.back), col = n.back > n.flash ? C.fg : C.accent;
-          if (f > 0.02) { ctx.beginPath(); ctx.arc(n.sx, n.sy, rad + (1 - f) * 20, 0, 7); ctx.strokeStyle = rgba(col, f * 0.6); ctx.lineWidth = 1.2; ctx.stroke(); }
-          ctx.beginPath(); ctx.arc(n.sx, n.sy, rad, 0, 7); ctx.fillStyle = rgba(C.bg, 0.94); ctx.fill();
-          ctx.lineWidth = 1.6; ctx.strokeStyle = f > 0.02 ? rgba(col, 1) : rgba(C.accent, 0.85); ctx.stroke();
-          if (f > 0.02) { ctx.beginPath(); ctx.arc(n.sx, n.sy, rad * 0.55, 0, 7); ctx.fillStyle = rgba(col, f); ctx.fill(); }
-        });
-        leftFade(ctx, W, H, wide);
-        ctx.font = '12px "JetBrains Mono", monospace'; ctx.textAlign = wide ? 'right' : 'left'; ctx.fillStyle = rgba(C.muted, 1);
-        ctx.fillText('forward ▸  ◂ backward', wide ? W - 28 : 20, H - 24);
-      }
-    };
-  })();
-
-  // network scene is kept but hidden: not wired to any switcher
-  var scenes = { flight: flight, network: netScene };
-  var scene = scenes.flight, T0 = 0;
 
   /* ---------- theme ---------- */
   var themeBtn = document.getElementById('theme');
@@ -410,7 +381,7 @@
     r.addEventListener('focusin', function (e) { if (e.target.matches(':focus-visible')) hoverRow = r; });
     r.addEventListener('focusout', function () { if (hoverRow === r) hoverRow = null; });
   });
-  function agentClient() { var a = scene.agent; return a ? { x: a.x, y: a.y } : { x: innerWidth * 0.62, y: innerHeight * 0.55 }; }
+  function agentClient() { var a = flight.agent; return a ? { x: a.x, y: a.y } : { x: innerWidth * 0.62, y: innerHeight * 0.55 }; }
   function updateFly(dt) {
     var k = reduce ? 1 : 1 - Math.exp(-dt * 9), tx = flyS.x, ty = flyS.y;
     if (hoverRow) {
@@ -425,26 +396,33 @@
       if (Math.abs(tx - flyS.x) + Math.abs(ty - flyS.y) < 10) { flyS.mode = 'idle'; flyS.o = 0; captured = false; dirty = true; }
     }
     if (flyS.mode !== 'idle') { flyS.x += (tx - flyS.x) * k; flyS.y += (ty - flyS.y) * k; }
-    fly.style.opacity = flyS.o;
+    if (flyS.mode === 'idle' && flyS.o === flyS.lastO) return;
+    flyS.lastO = flyS.o; fly.style.opacity = flyS.o;
     fly.style.transform = 'translate3d(' + (flyS.x - 6) + 'px,' + (flyS.y - 6) + 'px,0)';
   }
 
   /* ---------- main loop ---------- */
-  var T = 0, last = performance.now(), ctx = canvas.getContext('2d');
+  /* opaque canvas: the browser doesn't have to blend it with the page behind */
+  var T = 0, last = performance.now(), ctx = canvas.getContext('2d', { alpha: false }), slow = 0, frames = 0;
   function frame(now) {
     var dt = Math.min((now - last) / 1000, 0.05); last = now;
     var kk = Math.min(1, dt * 3.5); sm.x += (M.x - sm.x) * kk; sm.y += (M.y - sm.y) * kk;
     if (!reduce || dirty) {
       T += reduce ? 0 : dt;
-      var D = fit(canvas);
-      ctx.setTransform(D.d, 0, 0, D.d, 0, 0); ctx.clearRect(0, 0, D.w, D.h);
-      scene.draw(ctx, D, reduce ? scene.stillTime() : T, reduce ? 0.016 : dt, sm, captured);
+      var D = fit(canvas), t0 = performance.now();
+      ctx.setTransform(D.d, 0, 0, D.d, 0, 0); ctx.fillStyle = col('bg', 1); ctx.fillRect(0, 0, D.w, D.h);
+      flight.draw(ctx, D, reduce ? flight.stillTime() : T, reduce ? 0.016 : dt, sm, captured);
       dirty = false;
+      // over ~2 s, if most frames take too long, render a bit less sharp (2 -> 1.75 -> 1.5 -> 1.25)
+      if (!reduce && dprCap > 1.25 && D.d > 1.25) {
+        frames++; if (performance.now() - t0 > 14) slow++;
+        if (frames >= 120) { if (slow > 80) { dprCap -= 0.25; size = null; } frames = slow = 0; }
+      }
     }
     updateFly(dt);
     requestAnimationFrame(frame);
   }
-  window.addEventListener('resize', function () { dirty = true; });
+  window.addEventListener('resize', function () { size = null; dirty = true; });
 
   readColors();
   themeBtn.setAttribute('aria-label', root.getAttribute('data-theme') === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
