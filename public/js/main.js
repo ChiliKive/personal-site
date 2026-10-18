@@ -3,7 +3,6 @@
 
   var root = document.documentElement;
   var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var params = new URLSearchParams(location.search);
   function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) {} return null; }
 
   /* ---------- helpers ---------- */
@@ -86,26 +85,10 @@
     else { ctx.fillStyle = col('bg', 0.42); ctx.fillRect(0, 0, W, H); }
   }
 
-  /* loss sparkline + numbers, bottom right */
-  function readout(ctx, W, H, wide, txt, series, lo, hi, alpha) {
-    var rx = wide ? W - 28 : 20, ry = H - 24, sw = 150, sh = 30, sx0 = wide ? rx - sw : rx, sy0 = ry - 22 - sh, k;
-    ctx.globalAlpha = clamp(alpha, 0, 1);
-    if (series.length > 1) {
-      ctx.beginPath();
-      for (k = 0; k < series.length; k++) {
-        var xx = sx0 + k / Math.max(1, series.n - 1) * sw, yy = sy0 + (1 - (series[k] - lo) / Math.max(1e-6, hi - lo)) * sh;
-        k ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy);
-      }
-      ctx.strokeStyle = col('accent', 0.9); ctx.lineWidth = 1.4; ctx.stroke();
-    }
-    ctx.fillStyle = col('line', 1); ctx.fillRect(sx0, sy0 + sh + 3, sw, 1);
-    ctx.font = '12px "JetBrains Mono", monospace'; ctx.textAlign = wide ? 'right' : 'left'; ctx.fillStyle = col('muted', 1);
-    ctx.fillText(txt, rx, ry);
-    ctx.globalAlpha = 1;
-  }
-  /* every live descent on one chart, no labels: each run keeps its own (dimmer or brighter) tone */
+  /* loss chart, bottom right: every live descent on one chart, no labels;
+     each run keeps its own (dimmer or brighter) tone */
   var allScale = { n: 60, lo: -3, hi: 1 };
-  function readoutAll(ctx, W, H, wide, recs, dt) {
+  function readout(ctx, W, H, wide, recs, dt) {
     var rx = wide ? W - 28 : 20, sw = 150, sh = 30, sx0 = wide ? rx - sw : rx, sy0 = H - 24 - 22 - sh, tn = 20, tlo = 1e9, thi = -1e9, e = Math.min(1, dt * 2.5);
     recs.forEach(function (c) { tn = Math.max(tn, c.run.pts.length - 1); tlo = Math.min(tlo, c.run.lo); thi = Math.max(thi, c.run.hi); });
     if (thi > tlo) { allScale.n += (tn - allScale.n) * e; allScale.lo += (tlo - allScale.lo) * e; allScale.hi += (thi - allScale.hi) * e; }
@@ -113,7 +96,7 @@
     recs.slice().sort(function (a, b) { return a.run.tone - b.run.tone; }).forEach(function (c) {
       var a = clamp(c.alp, 0, 1) * sstep(1, 5, c.zr) * c.run.tone, k, xx, yy;
       if (a < 0.01) return;
-      ctx.globalAlpha = 1; ctx.beginPath();
+      ctx.beginPath();
       for (k = 0; k <= c.i0; k++) {
         xx = sx0 + k / allScale.n * sw; yy = sy0 + (1 - (c.run.pts[k][2] - allScale.lo) / span) * sh;
         k ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy);
@@ -124,18 +107,12 @@
     });
     ctx.fillStyle = col('line', 1); ctx.fillRect(sx0, sy0 + sh + 3, sw, 1);
   }
-  /* graph mode: 'single' (one point, start → convergence) or 'all'. ?graph=all, or press G to switch */
-  var graphMode = params.get('graph') === 'all' ? 'all' : 'single';
-  document.addEventListener('keydown', function (ev) {
-    if ((ev.key === 'g' || ev.key === 'G') && !ev.ctrlKey && !ev.metaKey && !ev.altKey) { graphMode = graphMode === 'all' ? 'single' : 'all'; dirty = true; }
-  });
-  function fmtLoss(l) { return (l < 0 ? '−' : ' ') + Math.abs(l).toFixed(3); }
 
   /* =====================================================================
      World: ONE endless landscape, one smooth function everywhere.
      It scrolls towards the camera. Loss wells are hashed per tile.
      ===================================================================== */
-  var LT = 18, DX = 0.5, DZ = 0.5, XMIN = -36, NXW = 145, HS = 1.7, V = 1.8, STEP = 0.05, HOLD = 1.8, S0 = 40, TRAIL_B = 16;
+  var LT = 18, DX = 0.5, DZ = 0.5, XMIN = -36, NXW = 145, HS = 1.7, V = 1.8, STEP = 0.05, S0 = 40, TRAIL_B = 16;
   var xsW = new Float32Array(NXW), i;
   for (i = 0; i < NXW; i++) xsW[i] = XMIN + i * DX;
 
@@ -263,7 +240,7 @@
       x = clamp(x + vx, -6, 6); z = clamp(z + vz, lo - 6, hi + 6); pts.push([x, z, lossAt(x, z)]);
     }
     var lo2 = 1e9, hi2 = -1e9; pts.forEach(function (p) { lo2 = Math.min(lo2, p[2]); hi2 = Math.max(hi2, p[2]); p.push(heightAt(p[0], p[1]) + 0.12); });
-    ru = { key: key, tone: 0.22 + 0.7 * rng(key * 53 + 11)(), pts: pts, sStart: k * LT + LT / 2 - 42 + m * V * 1.5, lo: lo2, hi: hi2 }; runCache[key] = ru; return ru;
+    ru = { tone: 0.22 + 0.7 * rng(key * 53 + 11)(), pts: pts, sStart: k * LT + LT / 2 - 42 + m * V * 1.5, lo: lo2, hi: hi2 }; runCache[key] = ru; return ru;
   }
 
   /* =====================================================================
@@ -312,15 +289,6 @@
         }
       }
       primary = primary || latest;
-      if (graphMode === 'single') {
-        /* stay on one point from its first step until it has converged (plus a short hold) */
-        var lk = null, cand = null;
-        recs.forEach(function (c) {
-          if (c.run.key === flight.lockKey && c.el - c.run.pts.length * STEP < HOLD) lk = c;
-          if (c.active && (!cand || c.el < cand.el)) cand = c;
-        });
-        primary = lk || cand || latest; flight.lockKey = primary ? primary.run.key : null;
-      }
       var spr = glowSprite();
       dots.forEach(function (d) {
         if (cap && d.rec === primary) return;
@@ -329,18 +297,9 @@
         ctx.beginPath(); ctx.arc(d.hx, d.hy, rad, 0, 7); ctx.fillStyle = col('accent', d.alp); ctx.fill();
       });
       this.agent = primary ? { x: primary.x, y: primary.y } : null;
-      if (graphMode === 'single' && primary && !cap) {
-        ctx.beginPath(); ctx.arc(primary.x, primary.y, 11, 0, 7); ctx.strokeStyle = col('accent', 0.55 * primary.alp); ctx.lineWidth = 1.2; ctx.stroke();
-      }
 
       leftFade(ctx, W, H, wide);
-
-      if (graphMode === 'all') readoutAll(ctx, W, H, wide, recs, dt);
-      else if (primary) {
-        var run0 = primary.run, loss = lerp(primary.P0[2], primary.P1[2], primary.fr), doneAll = primary.el - run0.pts.length * STEP > 0;
-        var ser = []; for (var z = 0; z <= primary.i0; z++) ser.push(run0.pts[z][2]); ser.n = run0.pts.length;
-        readout(ctx, W, H, wide, 'step ' + String(Math.round(primary.fi)).padStart(3, '0') + '  loss ' + fmtLoss(loss) + (doneAll ? '  converged' : ''), ser, run0.lo, run0.hi, primary.alp * 0.9 + 0.1);
-      }
+      readout(ctx, W, H, wide, recs, dt);
     }
   };
 
